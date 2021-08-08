@@ -1,0 +1,851 @@
+---
+title: "Credit Card Default Analysis"
+author: "John Paul, Merline Joseph, Piyush Singh, Suman Lohit"
+date: "24/11/2020"
+output: 
+  pdf_document: 
+    toc: yes
+    fig_width: 4
+    fig_height: 3.5
+    fig_caption: yes
+---
+
+```{r setup, include=FALSE}
+pacman::p_load(caret, corrplot, MASS, tidyverse, ggthemes,
+               scales, ggplot2, gtools, Hmisc, devtools, randomForest, 
+               PerformanceAnalytics,DMwR, ROSE,rpart, rpart.plot,gbm,adabag)
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+\newpage
+# Executive Summary
+
+Credit card default risk is one of the major risks faced by any credit card company. This can create a huge loss for the company. The companies nowadays, use data to find the potential defaulters. This is where predictive analytics comes into picture.  
+A good predictive model would help companies identify which clients are likely to default. This would provide them the opportunity to address and minimize the potential losses. 
+
+In our project, we will be doing the hypothesis testing for the following claims to identify possible defaulters:  
+
+1. **NULL Hypothesis** : *Clients are likely to default if the Balance-to-limit Ratio <= 2.*   
+
+Analysis: We are expecting to see higher likelihood of default in payment when the Balance-to-limit Ratio is over 2:1.
+
+2. **NULL Hypothesis** : *True difference in means of ages of non defaulters and defaulters is greater than or equal to 0*    
+
+Analysis: We are expecting older clients to default more than the younger clients.
+
+3. **NULL Hypothesis** : *The Default Ratio among males is less than or equal to that among females.*   
+
+Analysis: We are expecting Default ratio among males to be higher than that among females.  
+
+Additionally, we analyzed the patterns that lead to a default in credit card payment. We have used the following models to classify various credit card users in our paper : 
+
+* *Logistic Regression*
+* *Random Forest Classifier*
+* *Boosting Classifier*   
+
+we have utilized a variety of techniques to reduce the number of variables used in the above models, including **Step AIC**, **RegSubsets** and **Decision Trees** using Rpart.
+
+The class of importance in the Dataset is **Default = '1'**. But there are very less proportion of defaulters as compared to non-defaulters in the dataset.This leads to a very low sensitivity in the models built. We have attempted to solve this by oversampling the training set with **SMOTE (Synthetic Minority Oversampling Technique)** bringing the number of defaulters in the training set to be higher compared to number of non-Defaulters.
+
+Finally, we compare different models based on their sensitivity and finalize two models optimizing  their Sensitivity,Specificity and Accuracy. We would recommend *Logistic Regression using variables from Decision Tree* for better sensitivity and *Boosting Classifier* for a balanced model with similar values of sensitivity, specificity and accuracy.    
+
+
+\newpage
+# A.   Introduction
+
+Credit card default happens when clients fail to commit to their credit card payments. Default is a serious credit card offense that can not only affect client's standing with the card issuer company, but also with all other companies in general.When users accept a credit card, they agree to certain terms and conditions and are liable and bound to commit to it. Generally, in the US, If a user misses the minimum payment six months in a row, their credit card will be in default. The credit card issuer will likely close the account and report the issue to the credit bureaus.   
+
+In this paper, the information of clients such as balances, payments and defaults were collected. Analyzing this data helps the credit card company in : 
+
+- *Understanding the factors that lead to defaults in payment.*    
+- *Providing a signal of a possible default so that an early intervention can be done.*    
+- *Improving policies to manage risks and losses.*    
+- *Help the clients to better manage their finances to avoid defaults.*   
+
+If a person defaults and fails to pay the credit card bill, the issuer company can take a legal action against that person and if the person has no possible way to pay the debt, they will have to declare bankruptcy. This can cause a huge loss to the credit card company. In this paper, our main objective is to create a model that can correctly classify the possible defaulters in advance so as to warn the company and potentially help them mitigate their risks.    
+
+# B.   Data Description
+
+The credit card default dataset contains information on default payments, demographic factors, credit data, history of payment, and bill statements of credit card clients in Taiwan from April 2005 to September 2005. There are 25 variables and 30,000 records. There are no missing values. Variables include amount of given credit,  gender, marital status, age, education, monthly repayment status, monthly bill statement, monthly bill payments. The response / outcome variable indicates whether there was a default in payment- **Yes= 1, No= 0**.   
+
+Here PAY_0, PAY_2, PAY_3, PAY_4, PAY_5, PAY_6 shows the repayment status in September 2005, August 2005, July 2005 and so on. It is a categorical variable with values -1 signifying pay duly, 1 = payment delay for one month, 2 = payment delay for two months and so on. 
+
+All payment amounts in this dataset are in NT Dollars ( New Taiwan Dollar).   
+
+```{r Data Description, echo=FALSE, message=FALSE, warning=FALSE}
+credit<- read.csv("UCI_Credit_Card.csv")
+str(credit)
+
+```
+
+# C.   Data Preprocessing   
+
+Since there are no missing values, we took the dataset in its original form. A few names of the variables were changed to make them more reader-friendly. Years of education 0, 5 and 6, have been binned together as "other" since they represent a small percentage of the dataset. Since we have around 30,000 variables, the normality of the dataset can be assumed. Also we have changed the name of PAY_0 to PAY_1 for easier naming and identification purpose. The values above 3 in PAY_1 to PAY_6 have been assumed to take the value 4 because there are very less values above 3 in these categories. The variables SEX, EDUCATION, MARRIAGE, PAY_1, PAY_2, PAY_3, PAY_4, PAY_5, PAY_6 are categorical variables and they are converted into factors.  There are only 2 records with PAY_4 value = 1 . We removed them as a possible outlier or a mistake.   
+
+
+```{r Preprocessing, message=FALSE, warning=FALSE, include=FALSE}
+credit <- credit[-1]
+credit <- credit %>% rename(Default = default.payment.next.month) 
+credit <- credit %>% rename(PAY_1 = PAY_0)  
+#to keep it consistent with variables "BILL_AMT1" and "PAY_AMT1"
+
+#grouping 0,5,6 under 4 and interpreted as "others"
+credit$EDUCATION[credit$EDUCATION== 0]  <- 4 
+credit$EDUCATION[credit$EDUCATION== 5]  <- 4 
+credit$EDUCATION[credit$EDUCATION== 6]  <- 4 
+
+credit$PAY_1[credit$PAY_1>3]  <- 4 
+credit$PAY_2[credit$PAY_2>3]  <- 4 
+credit$PAY_3[credit$PAY_3>3]  <- 4 
+credit$PAY_4[credit$PAY_4>3]  <- 4 
+credit$PAY_5[credit$PAY_5>3]  <- 4 
+credit$PAY_6[credit$PAY_6>3]  <- 4 
+
+# there is only 2 PAY_4 values with 1. Removing it as a possible outlier or mistake. 
+credit <- credit[credit$PAY_4 != 1,]
+
+factor_vars <- c('SEX','EDUCATION','MARRIAGE','PAY_1','PAY_2','PAY_3','PAY_4','PAY_5','PAY_6')
+credit[factor_vars] <- lapply(credit[factor_vars], function(x) as.factor(x))
+credit$Balance <- credit$PAY_AMT1+ credit$PAY_AMT2+
+  credit$PAY_AMT3+ credit$PAY_AMT4+ credit$PAY_AMT5+  
+  credit$PAY_AMT6 -(credit$BILL_AMT1+credit$BILL_AMT2+  
+                      credit$BILL_AMT3+ credit$BILL_AMT4+  
+                      credit$BILL_AMT5+ credit$BILL_AMT6)
+credit$BalanceRatio <- -credit$Balance/credit$LIMIT_BAL
+credit1= credit  #duplicate
+
+
+
+```
+
+```{r Correlation Plot, echo=FALSE, fig.cap="From the correlation matrix plot, we can deduce that bill amounts are highly correlated with each other with a correlation value of 0.9 and the least correlated would be PAY_3, PAY_2, PAY_1, PAY_5, PAY_4, PAY_6 with respect to LIMIT_BAL.", message=FALSE, warning=FALSE}
+#Plotting a correlation plot
+library(ggcorrplot)
+corr_df <- credit1[, -c(2,3,4,6,7,8,9,10,11)]
+corr <-  round(cor(corr_df),1)
+ggcorrplot(corr, hc.order=TRUE, type = "lower",lab=TRUE, 
+           outline.color = "white", ggtheme = ggplot2::theme_gray,
+           colors=c("#6D9EC1", "white", "#E46726"), tl.cex = 7, lab_size = 2)
+```
+
+
+```{r Correlation plot2, echo=FALSE, fig.cap="correlation plot additionally removing variables 13,14,15,16 and 17", message=FALSE, warning=FALSE}
+corr_df <- credit1[, -c(2,3,4,6,7,8,9,10,11,13,14,15,16,17)] 
+corr <-  round(cor(corr_df),1)
+ggcorrplot(corr, hc.order=TRUE,lab=TRUE,type = "lower",
+           outline.color = "white", ggtheme = ggplot2::theme_gray,
+           colors=c("#6D9EC1", "white", "#E46726"), tl.cex = 7, lab_size = 2)
+```
+
+Thus we remove the highly correlated variables so as to make our algorithms faster and more efficient.
+
+```{r removing highly correlated variables, message=FALSE, warning=FALSE, include=FALSE}
+credit1 <- credit1[,-c(13,14,15,16,17)]
+```
+
+We have split the entire dataset into training and validation subsets. The split is done with 80% of the data belonging to the training data and the remaining 20% in the validation data. We can see that the number of 1's  i.e., the number of defaulters in the dataset is very less compared to 0's i.e., non defaulters. Thus, we will not be able to create a good classification model using this training data set. The Default class (1), which is the class of interest is also the minority class (amounts to only 22% of the dataset). In order to rectify this problem, we have used **SMOTE** to oversample the minority class of interest. Since we want to increase sensitivity, we went further and used SMOTE to overshoot the number of 1's as compared to 0s. SMOTE uses K-means and other algorithms to create the artificial samples. So we will be able to create a model with much better classification ability.  
+
+
+```{r Partition Training and validation, echo=FALSE, message=FALSE, warning=FALSE}
+
+#Setting the seed value and sample partitioning
+set.seed(123)
+smp_size <- floor(0.80 * nrow(credit))
+#credit1$balanceRatio <- credit$BalanceRatio
+train_index <-  sample(seq_len(nrow(credit1)), size=smp_size)
+train_df <-  credit1[train_index,]
+valid_df <-  credit1[-train_index,]
+#dim(train_df)
+#dim(valid_df)
+train_df1 <- train_df
+knitr::kable(table(train_df1$Default), caption = "Proportion of 0's and 1's in  training data set" )
+```
+
+Here we can see that the difference in proportion of the defaulters and non defaulters in the training dataset.   
+
+```{r SMOTE, echo=FALSE, message=FALSE, warning=FALSE}
+train_df_smote <- train_df
+train_df_smote$Default <- as.factor(train_df_smote$Default)
+train_df_smote <- SMOTE(Default ~ ., train_df_smote,perc.over = 200,perc.under = 100)
+train_df_smote$Default <- as.integer(as.character(train_df_smote$Default))
+train_df_smote1 <- train_df_smote
+knitr::kable(table(train_df_smote1$Default),caption = "Proportion of 0's and 1's in  training data set after SMOTE")
+```
+
+Here we can see that after applying SMOTE transformation, the proportion of the defaulters is higher than that of non-defaulters.   
+
+\newpage
+
+# D.    Exploratory Data Analysis
+
+We have visualized influence of various possible variables on the class *Default*. 
+
+## Default vs Sex 
+```{r facet wrap, echo=FALSE, fig.cap="Visualization showing number of male and female clients with being defaulter/non defaulter", message=FALSE, warning=FALSE}
+#Relationship between variables "Default" and "SEX"
+credit4 <- credit
+credit4$SEX <- factor(credit4$SEX, labels = c("Male","Female"))
+summarized<-credit4 %>% group_by(SEX, Default) %>% summarise(Freq=n()) 
+summarized$Default <- as.logical(as.integer(summarized$Default))
+summarized
+ggplot(summarized, aes(x= Default,y = Freq)) +geom_col()+ 
+  facet_wrap(~SEX)+ theme_bw()
+```
+    
+It could be observed from the graph that Males have a higher proportion of Defaulters than Females. But this is just a visual evidence, We need to further test and analyze in order to verify the authenticity of this finding.
+
+&nbsp;  
+
+## Default vs Education
+
+```{r education count, echo=FALSE, fig.cap="This stacked bar graph shows count of defaulters/non defaulters with respect to education" , fig.width=9, message=FALSE, warning=FALSE}
+#Bar graph of education with respect to Default in Payment
+DefaultPayment = as.factor(credit$Default)
+ggplot(credit4, aes(x = EDUCATION, fill = DefaultPayment)) + 
+  geom_bar() + labs(x = 'Education') + theme_excel()
+```
+  
+In Figure 4, we see a Default count of High School lower than Graduate School and University. But on careful observation, in overall ratio, High School individuals have a higher ratio to Default as compared to the Graduate School and University graduate clients. 
+
+&nbsp;  
+
+## Default vs Age
+```{r age count, echo=FALSE, fig.cap="This figure shows the ratio of defaulters and non defaulters by their age group ", fig.height=5, fig.width=7, message=FALSE, warning=FALSE}
+#Bar plot of Age with respect to Default in payment
+ggplot(credit4, aes(x = AGE, fill = DefaultPayment)) +
+  geom_bar() +
+  labs(x = 'Age') +
+  theme_excel()
+```
+
+In Figure 5, We can see that most of the individuals age lies between 20 to 40. The youngest client age is 21 and oldest is 79. It is unclear from the visualization if there is a difference in mean age of defaulters and non-defaulters and hence needs a statistical test to analyze. 
+
+&nbsp;  
+ 
+Other visualizations between a few additional variables can be seen in Appendix-2.
+
+\newpage
+
+# E.   Empirical Analysis   
+
+
+## Hypothesis Testing
+
+
+```{r Balance ratio, message=FALSE, warning=FALSE, include=FALSE}
+credit$Balance <- credit$PAY_AMT1+ credit$PAY_AMT2+
+  credit$PAY_AMT3+ credit$PAY_AMT4+ credit$PAY_AMT5+  
+  credit$PAY_AMT6 -(credit$BILL_AMT1+credit$BILL_AMT2+  
+                      credit$BILL_AMT3+ credit$BILL_AMT4+  
+                      credit$BILL_AMT5+ credit$BILL_AMT6)
+credit$BalanceRatio <- -credit$Balance/credit$LIMIT_BAL
+anova(lm(credit$BalanceRatio~ credit$Default))
+
+defaulter_BalanceRatio <- credit[credit$Default == 1,"BalanceRatio"]
+non_defaulter_BalanceRatio <- credit[credit$Default == 0, "BalanceRatio"]
+
+#T TEST
+test1 <- t.test(defaulter_BalanceRatio, mu=2, alternative = "g")
+#true mean >2
+test2 <- t.test(non_defaulter_BalanceRatio, mu=2, alternative = "l")
+#true mean <2
+
+```
+
+### First Hypothesis
+
+NuLL Hypothesis : *Clients are likely to default if the Balance-to-limit Ratio < = 2.*    
+Alternate Hypothesis : *Clients are less likely to default if the balance-to-limit ratio is greater than 2.*   
+
+
+```{r Hypothesis 1, echo=FALSE, message=FALSE, warning=FALSE}
+#T TEST
+test1 <- t.test(defaulter_BalanceRatio, mu=2, alternative = "g")
+test1
+test2 <- t.test(non_defaulter_BalanceRatio, mu=2, alternative = "l")
+test2
+```
+
+We can clearly see that for **defaulters**, the mean value of the balance to limit ratio is greater than 2 and p-value < alpha, alpha being 0.05 (95% Confidence). Hence we can reject the NULL Hypothesis and accept the Alternative Hypothesis. Thus, the mean balance to limit ratio for defaulters are above 2. For **Non Defaulters**, the mean value of the balance to limit ratio is less than 2. Here p-value < alpha(0.05) and thus we can reject the NULL Hypothesis and accept alternative Hypothesis. Thus the mean balance to limit ratio for non defaulters are less than 2.    
+
+### Second Hypothesis  
+
+NULL Hypothesis : *true difference in means of ages of non defaulters and defaulters is greater than or equal to 0.*   
+Alternative Hypothesis : *true difference in means of ages of non defaulters and defaulters is less than 0.*   
+
+```{r Second Hypothesis, echo=FALSE, message=FALSE, warning=FALSE}
+testAge<-t.test(credit$AGE~ credit$Default, alternative= "l")
+testAge
+#defaulter age>non defaulter. diff= 0.2
+```
+
+We see that from the T Test, the mean age of non defaulters is less than that of the defaulters. Here the p-value < alpha(0.05) at 95% Confidence level, Hence, we can reject the NULL Hypothesis and accept Alternative Hypothesis. Thus the mean age of people who are likely to default are higher than those who are less likely to default.   
+
+### Third Hypothesis
+
+NULL Hypothesis : *The Default Ratio among males is less than or equal to that among females.*    
+Alternative Hypothesis : *The Default Ratio among males is greater than that of females*   
+
+```{r Third Hypothesis, echo=FALSE, message=FALSE, warning=FALSE}
+#prop.test(x=c(2872, 3763), n=c(11886,18112))
+#True Difference is not 0. Default Prop male>female
+prop.test(x=c(2872, 3763), n=c(11886,18112),alternative = "g")
+#Proportion of default for males is greater than proportion of default for females
+
+```
+We use the Proportion Z Test to check the equality of proportions. We can see from the above result that, the mean proportion of the defaulters in male is greater than that of the female. Here p value < alpha(0.05) and thus we reject the NULL hypothesis and accept the Alternative Hypothesis. Hence, we can say that the true mean of the proportion of defaulters among males is greater than that of female at 95% Confidence.   
+
+## Logistic Regression   
+
+### Logistic Regression with all variables
+
+First, we run a basic logistic regression to all the variables in the over-sampled training dataset, (with the highly correlated variables removed), and train the model and then predict with the validation dataset.   
+
+```{r Logistic Regression with all variables, echo=FALSE, message=FALSE, warning=FALSE}
+set.seed(123)
+simple_logistic <- glm(Default ~ ., data = train_df_smote, family = "binomial")
+simple_logistic.pred <- predict(simple_logistic, valid_df,type = 'response')
+#Considering Probability threshold as 0.45
+simple_logistic.result <- ifelse(simple_logistic.pred > 0.45, 1, 0)
+simple_logistic.result <- factor(simple_logistic.result)
+
+confusionMatrix(simple_logistic.result, as.factor(valid_df$Default),positive = "1")
+
+```
+
+From the above result we can see that when the probability threshold is 0.45, the  logistic regression model is predicting with a sensitivity of 0.73, specificity of 0.64, accuracy of 0.66. This is overall a good model. If we select a lower threshold we can get an improved sensitivity, but the specificity gets bad. When the threshold is 0.45, there is an good trade off between the sensitivity and specificity and thus we have decided to use this probability value.   
+
+### StepAIC + Logistic   
+
+We run the StepAIC to select the best subset of variables that can predit the classification most appropriately. Then we run the logistic regression on the best subset.   
+
+
+```{r Step AIC+Logistic, echo=FALSE, message=FALSE, warning=FALSE}
+set.seed(123)
+#Running a stepAIC model with Logistic regression to reduce the number of variables based on accuracy
+logit <- glm( Default ~ ., data = train_df_smote, family = "binomial")
+stepLogit <- stepAIC(logit,direction = "both")
+stepLogit.pred <- predict(stepLogit, valid_df, type = "response")
+valid_df$Default= as.factor(valid_df$Default)
+
+predicted.classes <- ifelse(stepLogit.pred > 0.45, 1, 0)
+predicted1.classes <- factor(predicted.classes)
+confusionMatrix(predicted1.classes, valid_df$Default, positive = '1')
+```
+
+
+From this model, we get a sensitivity of 0.73, specificity of 0.64, overall accuracy of 0.66. This is also a good model.   
+
+
+### Regsubsets
+
+We run the regsubsets using backward method from the leaps package to select the best model with the best predictor variables and use that variables to perform the logistic regression to check if we got any considerable improvement from the  logistic regression with all variables included.   
+
+
+```{r Reg Subsets, echo=FALSE, message=FALSE, warning=FALSE, paged.print=TRUE}
+library(leaps)
+set.seed(123)
+regsub_smote <- regsubsets(Default~., data =  train_df_smote, method = "backward")
+summary_smote <- summary(regsub_smote)
+summary_smote$adjr2
+summary_smote$bic
+## LIMIT_BAL + PAY_1 + +PAY_2 + PAY_3 +PAY_4
+
+```
+
+From the adjusted Rsquare and BIC value, we choose the model 8 as the best model and it has LIMIT_BAL, PAY_1, PAY_2, PAY_3, PAY_4 as the predictors.
+
+```{r Logistic regression with parameters from RegSubsets smote, echo=FALSE, message=FALSE, warning=FALSE}
+set.seed(123)
+logistic_smote <- glm(Default ~ LIMIT_BAL+PAY_1+PAY_2+PAY_3+PAY_4, data = train_df_smote, family = 'binomial')
+summary(logistic_smote)
+## LIMIT_BAL + PAY_1 + PAY_3 + PAY_4
+logistic_smote.pred <- predict(logistic_smote, valid_df,type = 'response')
+logistic_smote.result <- ifelse(logistic_smote.pred > 0.45, 1, 0)
+logistic_smote.result <- factor(logistic_smote.result)
+
+confusionMatrix(logistic_smote.result, as.factor(valid_df$Default), positive = "1")
+```
+
+In this model, at a probability threshold equal to 0.45, we get a sensitivity of 0.71 and specificity of 0.63 with overall acuuracy of 0.65.   
+
+
+When we use the forward method for predictor selection, we add PAY_6 also to the previous model.   
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+set.seed(123)
+library(leaps)
+regsub_smote1 <- regsubsets(Default~., data =  train_df_smote, method = "forward")
+summary_smote1 <- summary(regsub_smote1)
+summary_smote1$adjr2
+summary_smote1$bic
+## LIMIT_BAL + PAY_1 + +PAY_2 + PAY_3 +PAY_4 +PAY_6
+```
+
+Here from the adjusted Rsquare and bic value, we choose the model 8 as the best model and it has LIMIT_BAL, PAY_1, PAY_2, PAY_3, PAY_4,PAY_6 as the predictors.   
+
+```{r Logistic regression with parameters from RegSubsets - forward, echo=FALSE, message=FALSE, warning=FALSE}
+set.seed(123)
+logistic_smote2 <- glm(Default ~ LIMIT_BAL+PAY_1+PAY_2+PAY_3+PAY_4+PAY_6, data = train_df_smote, family = 'binomial')
+#summary(logistic_smote2)
+## LIMIT_BAL + PAY_1 + PAY_3 + PAY_4 +PAY_5 +PAY_6
+logistic_smote2.pred <- predict(logistic_smote2, valid_df,type = 'response')
+logistic_smote2.result <- ifelse(logistic_smote2.pred > 0.45, 1, 0)
+logistic_smote2.result <- factor(logistic_smote2.result)
+
+  confusionMatrix(logistic_smote2.result, as.factor(valid_df$Default), positive = "1")
+```
+After performing logistic regression from the best model obtained from the forward subset selection model, we get a sensitivity of 0.72, specificity of 0.62, overall accuracy of 0.64.   
+
+## Decision Tree  
+
+
+```{r Decision Tree + Logistic regression, echo=FALSE, message=FALSE, warning=FALSE, paged.print=TRUE}
+set.seed(123)
+
+rpart.credit <- rpart(as.factor(Default)~ ., data =train_df_smote, cp = .01)
+rpart.plot(rpart.credit)
+``` 
+
+```{r logistic decision tree variables, echo=FALSE, message=FALSE, warning=FALSE}
+set.seed(123)
+#logistic regression with decision tree variables
+Model1 <- glm(as.factor(Default) ~ PAY_1+PAY_2 + PAY_3 + PAY_4 +BILL_AMT1+ PAY_AMT1+PAY_AMT2, data = train_df_smote, family = "binomial")
+
+Model1.pred <- predict(Model1, valid_df, type = "response")
+#df <- data.frame(actual = valid_df$Default, prediction = logistic_smote.pred)
+Model1.result <- ifelse(Model1.pred > 0.45, 1, 0)
+Model1.result <- factor(Model1.result)
+confusionMatrix(Model1.result, as.factor(valid_df$Default), positive = "1")
+```
+
+From the above result, we can see that our model with the best predictors obtained from the decision tree, we get an sensitivity of 0.74, specificity of 0.62 and an accuracy of 0.65.   
+
+
+## Random Forest Classifier
+
+On running the Random Forest Classifier with 1000 number of trees and number of predictors at each node as 5, we obtain the following results :
+
+
+```{r Random Forest using cross validation and variables from Regsubsets, echo=FALSE, message=FALSE, warning=FALSE}
+set.seed(123)
+#random forest on the reduced model 
+rnf1 <-  randomForest(as.factor(Default) ~ .,ntree=1000 ,mtry = 5, data = 
+                        train_df_smote, cutoff =c(0.55,0.45))
+rnf1
+rnf1_model.pred <- predict(rnf1, valid_df)
+#valid_df$Default= factor(valid_df$Default)
+
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+confusionMatrix(rnf1_model.pred, as.factor(valid_df$Default), positive="1")
+```
+By running the random forest classifier with a cutoff value of 0.45, we get a sensitivity of 0.64, specificity of 0.72 and overall accuracy of 0.71.   
+
+## Boosting Classifiers
+
+```{r Boosting, echo=FALSE, message=FALSE, warning=FALSE}
+set.seed(123)
+train_df_smote$Default <- factor(train_df_smote$Default)
+boost <- boosting(Default~ .,data = train_df_smote)
+pred <- predict(boost, valid_df)
+boost2 <- ifelse(pred$prob[ , 2] > 0.45, 1, 0)
+confusionMatrix(as.factor(boost2), as.factor(valid_df$Default),positive = '1')
+```
+From the classification using boosting, we are getting a sensitivity of 0.69, specificity of 0.67 and accuracy of 0.67.    
+
+&nbsp;
+The results obtained from the above algorithms and methods have been organized in the following tables : 
+
+* *Table 1 shows the sensitivity, specificity and accuracy when the probability cutoff is default*
+
+```{r echo=FALSE}
+Algorithms <- c("Basic Logistic Regression","Step AIC + Logistic Regression", "Backward Selection + Logistic Regression", "Forward Selection + Logistic Regression", "Decision Tree + Logistic Regression", "Random Forest", "Boosting (adaboost)")
+df <- data.frame(Algorithms)
+df$Sensitivity <- c(0.6773,0.6780,0.6555,0.6594,0.6517,0.6005,0.6129)
+df$Specificity <- c(0.7043,0.7039,0.7039,0.6999,0.7217,0.7820,0.7707)
+df$Accuracy <- c(0.6985,0.6983,0.6935,0.6912,0.7067,0.743,0.7368)
+knitr::kable(df, caption = "Performance when probability cutoff is 0.5")   
+
+```
+
+* *Table 2 shows the sensitivity, specificity and accuracy when the probability cutoff is 0.45*
+
+
+```{r echo=FALSE}
+df1 <- data.frame(Algorithms)
+df1$Sensitivity <- c(0.7269,0.7269,0.7075,0.7184,0.7362,0.6393,0.6912)
+df1$Specificity <- c(0.6355,0.6357,0.6302,0.6236,0.6228,0.7277,0.6659)
+df1$Accuracy <- c(0.6552,0.6553,0.6468,0.644,0.6472,0.7087,0.6713)
+knitr::kable(df1, caption = "Performance when probability threshold 0.45")
+```
+
+
+# Conclusion    
+
+## Hypothesis Tests
+
+Hypothesis tests to test if balance-to-limit ratio for defaulters is under 2:1 proved that the true mean for balance-to-limit ratio for non-defaulters is less than 2.  Thus, clients are more likely to default if the balance-to-limit ratio is over 2:1
+
+One-sided t-test on age to check whether the mean age of non-defaulters is greater than or equal to that of defaulters indicates that  the mean age of people who are likely to default are higher than those who are less likely to default. However, the mean ages of the two groups are quite close, difference in ages being just 0.3 years.
+
+Result of two proportions z-test on proportion of defaults between male and female states that the true mean of the proportion of defaulters among males is greater than that of female at 95% Confidence. 
+
+## Predictive Model 
+
+For a *0.45* cut-off and Class of Interest being *Default = 1*, of all the algorithms used, **Decision Tree followed by Logistic Regression** using those subset of variables provides the best sensitivity of *74%* and overall accuracy of *65%*. 
+
+Logistic Regression using all variables has the same sensitivity as Step-AIC followed by logistic regression but with slightly lower accuracy, meaning that Step-AIC did not result in any significant improvement in the model.
+
+Logistic Regression with Forward selection also has slightly lower sensitivity at 0.72.
+Boosting with *Adaboost* gives a balanced model with *69% sensitivity* and overall accuracy of *0.67*.
+
+Based on the requirements of the Company, a choice between two models can be made- 
+**If Sensitivity is the priority, Decision Tree followed by Logistic Regression is the best choice. If the company seeks a more balanced accuracy to avoid misclassifying clients as defaulters, Boosting with Adaboost is recommended.**
+
+
+\newpage
+# Appendix - 1   
+
+```{r Appendix -1, eval=FALSE}
+# Loading the Package
+pacman::p_load(caret, corrplot, MASS, tidyverse, ggthemes,
+               scales, ggplot2, gtools, Hmisc, devtools, randomForest, 
+               PerformanceAnalytics,DMwR, ROSE,rpart, rpart.plot) 
+
+#Preprocessing
+credit<- read.csv("UCI_Credit_Card.csv")
+str(credit)
+credit <- credit[-1]
+credit <- credit %>% rename(Default = default.payment.next.month) 
+credit <- credit %>% rename(PAY_1 = PAY_0)  
+#to keep it consistent with variables "BILL_AMT1" and "PAY_AMT1"
+
+#grouping 0,5,6 under 4 and interpreted as "others"
+credit$EDUCATION[credit$EDUCATION== 0]  <- 4 
+credit$EDUCATION[credit$EDUCATION== 5]  <- 4 
+credit$EDUCATION[credit$EDUCATION== 6]  <- 4 
+
+credit$PAY_1[credit$PAY_1>3]  <- 3 
+credit$PAY_2[credit$PAY_2>3]  <- 3 
+credit$PAY_3[credit$PAY_3>3]  <- 3 
+credit$PAY_4[credit$PAY_4>3]  <- 3 
+credit$PAY_5[credit$PAY_5>3]  <- 3 
+credit$PAY_6[credit$PAY_6>3]  <- 3 
+
+# there is only 2 PAY_4 values with 1. Removing it as a possible outlier/mistake. 
+credit <- credit[credit$PAY_4 != 1,]
+
+factor_vars <- 
+c('SEX','EDUCATION','MARRIAGE','PAY_1','PAY_2','PAY_3','PAY_4','PAY_5','PAY_6')
+credit[factor_vars] <- lapply(credit[factor_vars], function(x) as.factor(x))
+
+credit1= credit  #duplicate
+
+#Plotting Histograms
+hist(credit$LIMIT_BAL, breaks = 20 )
+hist(credit$BILL_AMT1, breaks = 20 )
+hist(credit$AGE, breaks = 20 )
+hist(credit$PAY_AMT1, breaks = 20 )
+
+#Relationship between variables "Default" and "SEX"
+credit4 <- credit
+credit4$SEX <- factor(credit4$SEX, labels = c("Male","Female"))
+summarized<-credit4 %>% group_by(SEX, Default) %>% summarise(Freq=n()) 
+summarized$Default <- as.logical(as.integer(summarized$Default))
+summarized
+ggplot(summarized, aes(x= Default,y = Freq)) +geom_col()+ 
+  facet_wrap(~SEX)+ theme_classic()
+
+# Boxplots of amount of credit limit by education
+credit4$EDUCATION <- factor(credit4$EDUCATION, 
+                      labels = c("Graduate School","University","High School",
+                                                          "Others"))
+qplot(EDUCATION, LIMIT_BAL, data=credit4, geom=c("boxplot"),
+      fill=EDUCATION, main="Limit Amount by Education ",
+      xlab="", ylab="Amount of credit given")
+
+#Bar graph of education with respect to Default in Payment
+DefaultPayment = as.factor(credit$Default)
+ggplot(credit, aes(x = EDUCATION, fill = DefaultPayment)) + 
+  geom_bar() + labs(x = 'Education') + theme_excel()
+
+#Bar plot of Age with respect to Default in payment
+ggplot(credit, aes(x = AGE, fill = DefaultPayment)) +
+  geom_bar() +
+  labs(x = 'Age') +
+  theme_excel()
+
+#Scatterplot showing how balance limit changes with age
+scatter <- ggplot(credit, aes(x = AGE, y = LIMIT_BAL))
+scatter + geom_count(col="blue", show.legend=F) +
+  labs( subtitle="Age Vs Credit Balance Amount")
+
+
+#Balance Ratio found for testing the null hypothesis
+credit$Balance <- credit$PAY_AMT1+ credit$PAY_AMT2+
+  credit$PAY_AMT3+ credit$PAY_AMT4+ credit$PAY_AMT5+  
+  credit$PAY_AMT6 -(credit$BILL_AMT1+credit$BILL_AMT2+  
+                      credit$BILL_AMT3+ credit$BILL_AMT4+  
+                      credit$BILL_AMT5+ credit$BILL_AMT6)
+credit$BalanceRatio <- -credit$Balance/credit$LIMIT_BAL
+anova(lm(credit$BalanceRatio~ credit$Default))
+
+defaulter_BalanceRatio <- credit[credit$Default == 1,"BalanceRatio"]
+non_defaulter_BalanceRatio <- credit[credit$Default == 0, "BalanceRatio"]
+
+#T TEST
+test1 <- t.test(defaulter_BalanceRatio, mu=2, alternative = "g")
+#true mean >2
+test2 <- t.test(non_defaulter_BalanceRatio, mu=2, alternative = "l")
+#true mean <2
+test3 <- t.test(defaulter_BalanceRatio, non_defaulter_BalanceRatio)
+#reject the null. Means are not equal. X>Y
+test4<- t.test(credit$BalanceRatio~ credit$Default)
+#Mean balance ratio of defaulters is 0.62 more than that of non-defaulters
+testAge<-t.test(credit$AGE~ credit$Default, alternative= "l")
+#defaulter age>non defaulter. diff= 0.2
+#prop.test(x=c(2872, 3763), n=c(11886,18112))
+#True Difference is not 0. Default Prop male>female
+prop.test(x=c(2872, 3763), n=c(11886,18112),alternative = "g")
+#Proportion of default for males is greater than proportion of default for
+#females
+
+
+#Plotting a correlation plot
+library(ggcorrplot)
+corr_df <- credit1[, -c(2,3,4,6,7,8,9,10,11)]
+corr <-  round(cor(corr_df),1)
+ggcorrplot(corr, hc.order=TRUE, type = "lower",lab=TRUE, 
+           outline.color = "white", ggtheme = ggplot2::theme_gray,
+           colors=c("#6D9EC1", "white", "#E46726"), tl.cex = 7, lab_size = 2)
+
+
+#correlation plot additionally removing variables 13,14,15,16 and 17
+corr_df <- credit1[, -c(2,3,4,6,7,8,9,10,11,13,14,15,16,17)] 
+corr <-  round(cor(corr_df),1)
+ggcorrplot(corr, hc.order=TRUE,lab=TRUE,type = "lower",
+           outline.color = "white", ggtheme = ggplot2::theme_gray,
+           colors=c("#6D9EC1", "white", "#E46726"), tl.cex = 7, lab_size = 2)
+
+credit1 <- credit1[,-c(13,14,15,16,17)]
+
+
+#Setting the seed value and sample partitioning
+set.seed(123)
+smp_size <- floor(0.80 * nrow(credit))
+#credit1$balanceRatio <- credit$BalanceRatio
+train_index <-  sample(seq_len(nrow(credit1)), size=smp_size)
+train_df <-  credit1[train_index,]
+valid_df <-  credit1[-train_index,]
+#dim(train_df)
+#dim(valid_df)
+train_df1 <- train_df
+knitr::kable(table(train_df1$Default), caption = "Proportion of 0's and 1's in
+             training data set" )
+
+#SMOTE
+set.seed(123)
+train_df_smote <- train_df
+train_df_smote$Default <- as.factor(train_df_smote$Default)
+train_df_smote <- SMOTE(Default ~ ., train_df_smote,perc.over = 200,
+                        perc.under = 100)
+train_df_smote$Default <- as.integer(as.character(train_df_smote$Default))
+train_df_smote1 <- train_df_smote
+knitr::kable(table(train_df_smote1$Default),
+      caption = "Proportion of 0's and 1's in  training data set after SMOTE")
+
+
+#Performing a logistic regression model
+set.seed(123)
+simple_logistic <- glm(Default ~ ., data = train_df_smote, family = "binomial")
+simple_logistic.pred <- predict(simple_logistic, valid_df,type = 'response')
+simple_logistic.result <- ifelse(simple_logistic.pred > 0.45, 1, 0)
+simple_logistic.result <- factor(simple_logistic.result)
+confusionMatrix(simple_logistic.result, as.factor(valid_df$Default),
+                positive = "1")
+#simple_logistic.result <- ifelse(simple_logistic.pred > 0.5, 1, 0)
+#simple_logistic.result <- factor(simple_logistic.result)
+#confusionMatrix(simple_logistic.result, as.factor(valid_df$Default),
+                #positive = "1")
+
+
+#Running a stepAIC model with Logistic regression to reduce the number of 
+#variables based on accuracy
+set.seed(123)
+logit <- glm( Default ~ ., data = train_df_smote, family = "binomial")
+stepLogit <- stepAIC(logit,direction = "both")
+stepLogit.pred <- predict(stepLogit, valid_df, type = "response")
+valid_df$Default= as.factor(valid_df$Default)
+predicted.classes <- ifelse(stepLogit.pred > 0.45, 1, 0)
+predicted1.classes <- factor(predicted.classes)
+confusionMatrix(predicted1.classes, valid_df$Default, positive = '1')
+
+#predicted.classes <- ifelse(stepLogit.pred > 0.5, 1, 0)
+#predicted1.classes <- factor(predicted.classes)
+#confusionMatrix(predicted1.classes, valid_df$Default, positive = '1')
+
+
+#Backward Subset Selection
+library(leaps)
+set.seed(123)
+regsub_smote <- regsubsets(Default~., data =  train_df_smote,
+                           method = "backward")
+summary_smote <- summary(regsub_smote)
+summary_smote$adjr2
+summary_smote$bic
+## LIMIT_BAL + PAY_1 + +PAY_2 + PAY_3 +PAY_4
+
+set.seed(123)
+logistic_smote <- glm(Default ~ LIMIT_BAL+PAY_1+PAY_2+PAY_3+PAY_4,
+                      data = train_df_smote, family = 'binomial')
+summary(logistic_smote)
+## LIMIT_BAL + PAY_1 + PAY_3 + PAY_4
+logistic_smote.pred <- predict(logistic_smote, valid_df,type = 'response')
+logistic_smote.result <- ifelse(logistic_smote.pred > 0.45, 1, 0)
+logistic_smote.result <- factor(logistic_smote.result)
+
+confusionMatrix(logistic_smote.result, as.factor(valid_df$Default),
+                positive = "1")
+
+#logistic_smote.result <- ifelse(logistic_smote.pred > 0.45, 1, 0)
+#logistic_smote.result <- factor(logistic_smote.result)
+
+#confusionMatrix(logistic_smote.result, as.factor(valid_df$Default),
+                #positive = "1")
+
+#Forward Subset Selection
+
+
+set.seed(123)
+library(leaps)
+regsub_smote1 <- regsubsets(Default~., data =  train_df_smote,
+                            method = "forward")
+summary_smote1 <- summary(regsub_smote1)
+summary_smote1$adjr2
+summary_smote1$bic
+## LIMIT_BAL + PAY_1 + +PAY_2 + PAY_3 +PAY_4 +PAY_6
+
+set.seed(123)
+logistic_smote2 <- glm(Default ~ LIMIT_BAL+PAY_1+PAY_2+PAY_3+PAY_4+PAY_6, 
+                       data = train_df_smote, family = 'binomial')
+#summary(logistic_smote2)
+## LIMIT_BAL + PAY_1 + PAY_3 + PAY_4 +PAY_5 +PAY_6
+logistic_smote2.pred <- predict(logistic_smote2, valid_df,type = 'response')
+logistic_smote2.result <- ifelse(logistic_smote2.pred > 0.45, 1, 0)
+logistic_smote2.result <- factor(logistic_smote2.result)
+confusionMatrix(logistic_smote2.result, as.factor(valid_df$Default),
+                positive = "1")
+
+#logistic_smote2.result <- ifelse(logistic_smote2.pred > 0.45, 1, 0)
+#logistic_smote2.result <- factor(logistic_smote2.result)
+#confusionMatrix(logistic_smote2.result, as.factor(valid_df$Default),
+#                positive = "1")
+#Decision Tree
+set.seed(123)
+rpart.credit <- rpart(as.factor(Default)~ ., data =train_df_smote, cp = .01)
+rpart.plot(rpart.credit)
+#logistic regression with decision tree variables
+Model1 <- glm(as.factor(Default) ~ 
+PAY_1+PAY_2 + PAY_3 + PAY_4 +BILL_AMT1+ PAY_AMT1+PAY_AMT2, 
+data = train_df_smote, family = "binomial")
+
+Model1.pred <- predict(Model1, valid_df, type = "response")
+#df <- data.frame(actual = valid_df$Default, prediction = logistic_smote.pred)
+Model1.result <- ifelse(Model1.pred > 0.45, 1, 0)
+Model1.result <- factor(Model1.result)
+confusionMatrix(Model1.result, as.factor(valid_df$Default), positive = "1")
+
+#Model1.result <- ifelse(Model1.pred > 0.45, 1, 0)
+#Model1.result <- factor(Model1.result)
+#confusionMatrix(Model1.result, as.factor(valid_df$Default), positive = "1")
+
+#Random Forest Classifier
+set.seed(123)
+#random forest on the reduced model 
+rnf1 <-  randomForest(as.factor(Default) ~ .,ntree=1000 ,mtry = 5, data = 
+                        train_df_smote, cutoff =c(0.55,0.45))
+rnf1
+rnf1_model.pred <- predict(rnf1, valid_df)
+confusionMatrix(rnf1_model.pred, as.factor(valid_df$Default), positive="1")
+
+#rnf1 <-  randomForest(as.factor(Default) ~ .,ntree=1000 ,mtry = 5, data = 
+#                        train_df_smote, cutoff =c(0.5,0.5))
+#rnf1
+#rnf1_model.pred <- predict(rnf1, valid_df)
+#confusionMatrix(rnf1_model.pred, as.factor(valid_df$Default), positive="1")
+
+#Boosting Classifier
+set.seed(123)
+train_df_smote$Default <- factor(train_df_smote$Default)
+boost <- boosting(Default~ .,data = train_df_smote)
+pred <- predict(boost, valid_df)
+boost2 <- ifelse(pred$prob[ , 2] > 0.45, 1, 0)
+confusionMatrix(as.factor(boost2), as.factor(valid_df$Default),positive = '1')
+#boost2 <- ifelse(pred$prob[ , 2] > 0.45, 1, 0)
+#confusionMatrix(as.factor(boost2), as.factor(valid_df$Default),positive = '1')
+```
+\newpage
+# Appendix - 2 : Visualizations
+
+## Histogram of Limit Balance
+```{r histogram1, echo=FALSE, fig.cap="Distribution of Credit limit ", message=FALSE, warning=FALSE}
+hist(credit$LIMIT_BAL, breaks = 20)
+```
+
+## Histogram of Bill Amount 1
+```{r histogram2, echo=FALSE, fig.cap=" This shows the histogram of the distribution of bill amount 1 in the dataset"}
+hist(credit$BILL_AMT1, breaks = 20)
+```
+
+## Histogram of Age 
+```{r histogram3, echo=FALSE, fig.cap="The figure shows the count of people in different age groups"}
+hist(credit$AGE, breaks = 20)
+```
+
+## Box plot of Credit Limit vs Education
+```{r Boxplot, echo=FALSE, fig.cap="This boxplot shows the credit limit with respect to the client's education ", fig.width=9, message=FALSE, warning=FALSE}
+# Boxplots of amount of credit limit by education
+credit4$EDUCATION <- factor(credit4$EDUCATION, 
+                      labels = c("Graduate School","University","High School",
+                                                          "Others"))
+qplot(EDUCATION, LIMIT_BAL, data=credit4, geom=c("boxplot"),
+      fill=EDUCATION, main="Limit Amount by Education ",
+      xlab="", ylab="Amount of credit given")
+```
+
+## Scatter plot of Credit Limit vs Age
+
+```{r balance limit, echo=FALSE, fig.cap="Scatterplot showing how credit limit changes with age ", fig.height=6, fig.width=8, message=FALSE, warning=FALSE}
+#Scatterplot showing how balance limit changes with age
+scatter <- ggplot(credit, aes(x = AGE, y = LIMIT_BAL))
+scatter + geom_count(col="blue", show.legend=F) +
+  labs( subtitle="Age Vs Credit Balance Amount")
+```  
+
+\newpage
+# Acknowledgements    
+
+* Dataset Source : [https://archive.ics.uci.edu/ml/datasets/default+of+credit+card+clients](https://archive.ics.uci.edu/ml/datasets/default+of+credit+card+clients)    
+
+* [https://www.thebalance.com/what-is-credit-card-default](https://www.thebalance.com/what-is-credit-card-default-960209#:~:text=If%20you%20miss%20the%20minimum,default%20to%20the%20credit%20bureaus)   
+
+* [https://www.valuepenguin.com/what-happens-if-you-dont-pay-credit-card-bill](https://www.valuepenguin.com/what-happens-if-you-dont-pay-credit-card-bill#:~:text=If%20you%20don't%20pay%20your%20credit%20card%20bill%2C%20expect,and%20have%20your%20wages%20garnished)    
+
+* [https://cran.r-project.org/web/packages/adabag/adabag.pdf](https://cran.r-project.org/web/packages/adabag/adabag.pdf)    
+
+* [https://cran.r-project.org/web/packages/randomForest/randomForest.pdf](https://cran.r-project.org/web/packages/randomForest/randomForest.pdf)   
+
+* [https://ggplot2-book.org/index.html](https://ggplot2-book.org/index.html)   
+
+* [https://r4ds.had.co.nz/data-visualisation.html](https://r4ds.had.co.nz/data-visualisation.html) 
+
+* [https://www.datatechnotes.com/2018/03/classification-with-adaboost-model-in-r](https://www.datatechnotes.com/2018/03/classification-with-adaboost-model-in-r.html#:~:text=AdaBoost%20(Adaptive%20Boosting)%20is%20a%20boosting%20algorithm%20in%20machine%20learning.&text=Adaboost%20improves%20those%20classifiers%20by,to%20classify%20data%20in%20R)
+
+* Galit Shmueli, Peter Bruce, Inbal Yahav, Nitin Patel, and Kenneth Lichtendahl. Data Mining for Business Analytics: Concepts, Techniques, and Applications in R, 1st edition, 2018. Wiley. ISBN: 978-1-118-87936-8 (Hardcover), ISBN: 978-1-118-87933-7   
+
+
+
+
